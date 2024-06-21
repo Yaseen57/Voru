@@ -1,65 +1,65 @@
-import logging
-from telegram import Update, ForceReply
-from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
-import io
-import contextlib
-import traceback
+import subprocess
+import signal
+import os
+import sys
+import requests
+import tarfile
 
-# Enable logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Constants
+NGROK_URL = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz"
+NGROK_TAR = "ngrok-v3-stable-linux-amd64.tgz"
+NGROK_DIR = "./ngrok"
+NGROK_AUTH_TOKEN = "2ULlZeaFoXx7Kqk7kcYMlsel5JO_3mMWSwcCzs7uL4jtRaQ44"
 
-# Define a few command handlers
-async def start(update: Update, context: CallbackContext) -> None:
-    """Send a message when the command /start is issued."""
-    user = update.effective_user
-    await update.message.reply_markdown_v2(
-        fr'Hi {user.mention_markdown_v2()}\!',
-        reply_markup=ForceReply(selective=True),
-    )
+# Function to download and extract ngrok
+def download_and_extract_ngrok():
+    response = requests.get(NGROK_URL)
+    with open(NGROK_TAR, 'wb') as file:
+        file.write(response.content)
+    with tarfile.open(NGROK_TAR, 'r:gz') as tar:
+        tar.extractall(path=NGROK_DIR)
 
-async def help_command(update: Update, context: CallbackContext) -> None:
-    """Send a message when the command /help is issued."""
-    await update.message.reply_text('Send me Python code and I will run it!')
+# Signal handler for Ctrl+C
+def signal_handler(sig, frame):
+    print("Interrupt received, terminating subprocesses...")
+    if ssh_process.poll() is None:
+        ssh_process.terminate()
+    if ngrok_process.poll() is None:
+        ngrok_process.terminate()
+    sys.exit(0)
 
-async def run_code(update: Update, context: CallbackContext) -> None:
-    """Run the user's code."""
-    user_code = update.message.text
-    output = io.StringIO()
-    
-    try:
-        with contextlib.redirect_stdout(output):
-            exec(user_code)
-        result = output.getvalue()
-        if not result:
-            result = 'Code executed successfully!'
-    except Exception as e:
-        result = f'Error: {str(e)}\n{traceback.format_exc()}'
-    
-    try:
-        await update.message.reply_text(f'```\n{result}\n```', parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        logger.error(f"Failed to send message: {e}")
+# Register the signal handler
+signal.signal(signal.SIGINT, signal_handler)
 
-def main() -> None:
-    """Start the bot."""
-    # Insert your bot's token here
-    token = '7111705639:AAHeFXkCSSSuw_kBdvNTrRy5b0WyD-yY9lI'  # Replace with your actual bot token
-    application = Application.builder().token(token).connect_timeout(10).read_timeout(10).build()
+# Download and extract ngrok
+if not os.path.exists(NGROK_DIR):
+    os.makedirs(NGROK_DIR)
+download_and_extract_ngrok()
 
-    # on different commands - answer in Telegram
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
+# Add ngrok authtoken
+ngrok_auth_command = f"{NGROK_DIR}/ngrok config add-authtoken {NGROK_AUTH_TOKEN}"
+subprocess.run(ngrok_auth_command, shell=True, check=True)
 
-    # on non command i.e. message - run the user's code
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, run_code))
+# Install and start the SSH server
+install_ssh_command = "sudo apt update && sudo apt install -y openssh-server"
+subprocess.run(install_ssh_command, shell=True, check=True)
 
-    # Start the Bot
-    application.run_polling()
+# Set password for user 'turjaun' and start the SSH service
+ssh_command = "echo 'turjaun:1234' | sudo chpasswd && sudo service ssh start"
+ssh_process = subprocess.Popen(ssh_command, shell=True)
 
-if __name__ == '__main__':
-    main()
+# Start ngrok for SSH
+ngrok_command = f"{NGROK_DIR}/ngrok tcp 22"
+ngrok_process = subprocess.Popen(ngrok_command, shell=True)
+
+# Wait for the subprocesses to complete
+try:
+    ssh_process.wait()
+    ngrok_process.wait()
+except Exception as e:
+    print(f"Error occurred: {e}")
+finally:
+    if ssh_process.poll() is None:
+        ssh_process.terminate()
+    if ngrok_process.poll() is None:
+        ngrok_process.terminate()
